@@ -1,0 +1,10 @@
+Scrape the list of highest grossing films from Wikipedia. It is at the URL:
+https://en.wikipedia.org/wiki/List_of_highest-grossing_films
+
+Answer the following questions and respond with a JSON array containing the answers:
+1. How many $2 billion movies were released before 2000?
+2. Which is the earliest film that grossed over $1.5 billion?
+3. What's the correlation between the Rank and Peak columns?
+4. Draw a scatterplot of Rank vs Peak along with a dotted red regression line through it.
+
+Return the plot as a base-64 encoded data URI under 100,000 bytes.

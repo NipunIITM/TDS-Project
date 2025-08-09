@@ -1,0 +1,14 @@
+Analyze the provided CSV data and answer the following questions. Return your answers as a JSON object with the keys matching the question numbers:
+
+1. What is the average salary by department?
+2. What is the correlation between age and salary?
+3. Which department has the highest average years of experience?
+4. Create a scatter plot of age vs salary, colored by department. Include a legend and return as a base64 data URI.
+
+Format your response as:
+{
+  "1": {...},
+  "2": 0.xyz,
+  "3": "Department Name",
+  "4": "data:image/png;base64,..."
+}
