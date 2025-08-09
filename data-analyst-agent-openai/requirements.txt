@@ -1,0 +1,13 @@
+flask
+python-dotenv
+openai>=1.30.0
+requests
+pandas
+numpy
+beautifulsoup4
+lxml
+matplotlib
+seaborn
+scikit-learn
+duckdb
+gunicorn
