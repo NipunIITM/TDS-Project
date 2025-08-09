@@ -1,0 +1,7 @@
+Analyze the provided CSV data and answer the following questions:
+
+1. What is the average salary by department?
+2. What is the correlation between age and salary?
+3. Create a scatter plot of age vs salary with different colors for each department.
+
+Return the results as a JSON array.
