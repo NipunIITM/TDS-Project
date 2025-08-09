@@ -16,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 import seaborn as sns
+import multiprocessing as mp
 
 import requests
 from bs4 import BeautifulSoup
@@ -102,61 +103,151 @@ def _whitelist_import(name, globals=None, locals=None, fromlist=(), level=0):  #
     raise ImportError(f"Import of '{name}' is not allowed")
 
 
-class Timeout:
-    def __init__(self, seconds: int):
-        self.seconds = seconds
+def _child_exec(code_string: str, df: Optional[pd.DataFrame], conn):
+    try:
+        import io as _io
+        import json as _json
+        import re as _re
+        import time as _time
+        import base64 as _base64
+        import numpy as _np
+        import pandas as _pd
+        import matplotlib as _matplotlib
+        _matplotlib.use("Agg")
+        import matplotlib.pyplot as _plt
+        from sklearn.linear_model import LinearRegression as _LinReg
+        import requests as _requests
+        from bs4 import BeautifulSoup as _BeautifulSoup
+        import seaborn as _sns
 
-    def __enter__(self):
-        def _handle(signum, frame):
-            raise TimeoutError("Execution time limit exceeded")
-        signal.signal(signal.SIGALRM, _handle)
-        signal.alarm(self.seconds)
+        def _wl_import(name, globals=None, locals=None, fromlist=(), level=0):
+            allowed = {
+                "io": _io,
+                "json": _json,
+                "re": _re,
+                "time": _time,
+                "base64": _base64,
+                "numpy": _np,
+                "np": _np,
+                "pandas": _pd,
+                "pd": _pd,
+                "matplotlib": _matplotlib,
+                "matplotlib.pyplot": _plt,
+                "seaborn": _sns,
+                "sns": _sns,
+                "sklearn": __import__("sklearn"),
+                "sklearn.linear_model": __import__("sklearn.linear_model", fromlist=["LinearRegression"]),
+                "requests": _requests,
+                "bs4": __import__("bs4", fromlist=["BeautifulSoup"]),
+            }
+            if name in allowed:
+                return allowed[name]
+            for k in list(allowed.keys()):
+                if name.startswith(k + "."):
+                    return __import__(name, globals, locals, fromlist, level)
+            raise ImportError(f"Import of '{name}' is not allowed")
 
-    def __exit__(self, exc_type, exc, tb):
-        signal.alarm(0)
-        return False
+        safe_globals = {
+            "__builtins__": {**SAFE_BUILTINS, "__import__": _wl_import},
+            "io": _io,
+            "json": _json,
+            "re": _re,
+            "time": _time,
+            "base64": _base64,
+            "np": _np,
+            "numpy": _np,
+            "pd": _pd,
+            "pandas": _pd,
+            "plt": _plt,
+            "LinearRegression": _LinReg,
+            "requests": _requests,
+            "BeautifulSoup": _BeautifulSoup,
+            "matplotlib": _matplotlib,
+            "df": (df.copy() if df is not None else None),
+        }
+        safe_locals = {"final_answers": None}
+        exec(code_string, safe_globals, safe_locals)
+        result = safe_locals.get("final_answers", None)
+        if result is None:
+            conn.send({"error": "Generated script did not set 'final_answers'."})
+        else:
+            conn.send(result)
+    except Exception as e:
+        conn.send({"error": "Failed to execute generated script", "details": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _execute_in_subprocess(code_string: str, df: Optional[pd.DataFrame], timeout_seconds: int):
+    parent_conn, child_conn = mp.Pipe(duplex=False)
+    p = mp.Process(target=_child_exec, args=(code_string, df, child_conn))
+    p.daemon = True
+    p.start()
+    p.join(timeout_seconds)
+    if p.is_alive():
+        try:
+            p.terminate()
+        except Exception:
+            pass
+        return {"error": "Execution time limit exceeded"}
+    if parent_conn.poll(1):
+        try:
+            return parent_conn.recv()
+        except EOFError:
+            return {"error": "No result received from execution process"}
+    return {"error": "No result received from execution process"}
 
 
 def safe_exec(code_string: str, df: Optional[pd.DataFrame]) -> Any:
-    df_copy = df.copy() if df is not None else None
-
-    safe_globals: Dict[str, Any] = {
-        "__builtins__": {**SAFE_BUILTINS, "__import__": _whitelist_import},
-        "io": io,
-        "json": json,
-        "re": re,
-        "time": time,
-        "base64": base64,
-        "np": np,
-        "numpy": np,
-        "pd": pd,
-        "pandas": pd,
-        "plt": plt,
-        "LinearRegression": LinearRegression,
-        "requests": requests,
-        "BeautifulSoup": BeautifulSoup,
-        # provide df
-        "df": df_copy,
-        # ensure matplotlib works headless
-        "matplotlib": matplotlib,
-    }
-
-    safe_locals: Dict[str, Any] = {"final_answers": None}
-
-    # Execution time limit for generated code
     timeout_seconds = int(os.environ.get("EXEC_TIMEOUT_SECONDS", "90"))
+    # Prefer POSIX signals if available, else use subprocess fallback
+    if hasattr(signal, "SIGALRM"):
+        try:
+            class _Timeout:
+                def __enter__(self_inner):
+                    def _handle(signum, frame):
+                        raise TimeoutError("Execution time limit exceeded")
+                    signal.signal(signal.SIGALRM, _handle)
+                    signal.alarm(timeout_seconds)
 
-    try:
-        with Timeout(timeout_seconds):
-            exec(code_string, safe_globals, safe_locals)
-        result = safe_locals.get("final_answers", None)
-        if result is None:
-            return {"error": "Generated script did not set 'final_answers'."}
-        return result
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[ERROR] safe_exec failed:\n{tb}")
-        return {"error": "Failed to execute generated script", "details": str(e)}
+                def __exit__(self_inner, exc_type, exc, tb):
+                    signal.alarm(0)
+                    return False
+
+            df_copy = df.copy() if df is not None else None
+            safe_globals: Dict[str, Any] = {
+                "__builtins__": {**SAFE_BUILTINS, "__import__": _whitelist_import},
+                "io": io,
+                "json": json,
+                "re": re,
+                "time": time,
+                "base64": base64,
+                "np": np,
+                "numpy": np,
+                "pd": pd,
+                "pandas": pd,
+                "plt": plt,
+                "LinearRegression": LinearRegression,
+                "requests": requests,
+                "BeautifulSoup": BeautifulSoup,
+                "matplotlib": matplotlib,
+                "df": df_copy,
+            }
+            safe_locals: Dict[str, Any] = {"final_answers": None}
+            with _Timeout():
+                exec(code_string, safe_globals, safe_locals)
+            result = safe_locals.get("final_answers", None)
+            if result is None:
+                return {"error": "Generated script did not set 'final_answers'."}
+            return result
+        except Exception:
+            # Fallback to subprocess on any signal issues
+            return _execute_in_subprocess(code_string, df, timeout_seconds)
+    else:
+        return _execute_in_subprocess(code_string, df, timeout_seconds)
 
 
 # -----------------------------
