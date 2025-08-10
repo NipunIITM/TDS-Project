@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+beautifulsoup4
+requests
+pillow
+python-dotenv
+langchain
+langchain-openai
+langchain-google-genai
+langchain-experimental
+aiofiles
+duckdb
+numpy
+pandas
+seaborn
+matplotlib
+python-multipart
